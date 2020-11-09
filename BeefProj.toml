@@ -1,0 +1,6 @@
+FileVersion = 1
+
+[Project]
+Name = "Xml-Beef"
+TargetType = "BeefLib"
+StartupObject = "Xml_Beef.Program"

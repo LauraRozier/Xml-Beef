@@ -1,0 +1,5 @@
+FileVersion = 1
+Projects = {Xml-Beef = {Path = "."}, Xml-Beef-Test = {Path = "Xml-Beef-Test"}}
+
+[Workspace]
+StartupProject = "Xml-Beef-Test"

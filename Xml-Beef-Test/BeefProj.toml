@@ -1,0 +1,6 @@
+FileVersion = 1
+Dependencies = {corlib = "*", Xml-Beef = "*"}
+
+[Project]
+Name = "Xml-Beef-Test"
+StartupObject = "Xml_Beef_Test.Program"
