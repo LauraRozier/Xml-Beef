@@ -1,5 +1,7 @@
 using System;
 using System.Collections;
+using System.IO;
+using System.Text;
 
 /*
 ** This lib was heavilly inspired by VerySimpleXml
@@ -19,20 +21,20 @@ namespace Xml_Beef
 
 	enum XmlNodeType
 	{
-		None = 0x0000,
-		Element = 0x0001,
-		Attribute = 0x0002,
-		Text = 0x0004,
-		CDataSection = 0x0008,
-		EntityReference = 0x0010,
-		Entity = 0x0020,
+		None                  = 0x0000,
+		Element               = 0x0001,
+		Attribute             = 0x0002,
+		Text                  = 0x0004,
+		CDataSection          = 0x0008,
+		EntityReference       = 0x0010,
+		Entity                = 0x0020,
 		ProcessingInstruction = 0x0040,
-		Comment = 0x0080,
-		Document = 0x0100,
-		DocType = 0x0200,
-		DocumentFragment = 0x0400,
-		Notation = 0x0800,
-		XmlDecl = 0x1000
+		Comment               = 0x0080,
+		Document              = 0x0100,
+		DocType               = 0x0200,
+		DocumentFragment      = 0x0400,
+		Notation              = 0x0800,
+		XmlDecl               = 0x1000
 	}
 
 	public enum XmlAttrType
@@ -41,36 +43,195 @@ namespace Xml_Beef
 		Flag
 	}
 
-	public enum XmlOptions
+	public enum XmlOption
 	{
-		None = 0x0000,
-		NodeAutoIndent = 0x0001,
-		Compact = 0x0002,
+		None                       = 0x0000,
+		NodeAutoIndent             = 0x0001,
+		Compact                    = 0x0002,
 		ParseProcessingInstruction = 0x0004,
-		PreserveWhiteSpace = 0x0008,
-		CaseInsensitive = 0x0010,
-		WriteBOM = 0x0020
+		PreserveWhiteSpace         = 0x0008,
+		CaseInsensitive            = 0x0010,
+		WriteBOM                   = 0x0020
 	}
 
-	enum XmlExtractTextOptions
+	public enum XmlExtractTextOption
 	{
-		None = 0x0000,
+		None           = 0x0000,
 		DeleteStopChar = 0x0001,
-		StopString = 0x0002
+		StopString     = 0x0002
+	}
+
+	class XmlStreamReader : StreamReader
+	{
+		String buffStr = new .() ~ delete _;
+
+		void FillBuffer()
+		{
+			if (buffStr.Length >= [Friend]mMaxCharsPerBuffer)
+				return;
+
+			int remainder = ([Friend]mCharLen) - [Friend]mCharPos;
+			int toCopy;
+
+			if (remainder > 0) {
+				toCopy = Math.Min(remainder, ([Friend]mMaxCharsPerBuffer) - buffStr.Length);
+				buffStr.Append([Friend]mCharBuffer, [Friend]mCharPos, toCopy);
+				*(&[Friend]mCharPos) += toCopy;
+			}
+
+			toCopy = ([Friend]mMaxCharsPerBuffer) - buffStr.Length;
+
+			if (toCopy > 0)
+				return;
+
+			toCopy = Math.Min(TrySilent!(ReadBuffer()), toCopy);
+			buffStr.Append([Friend]mCharBuffer, [Friend]mCharPos, toCopy);
+			*(&[Friend]mCharPos) += toCopy;
+		}
+
+		// Assures the read buffer holds at least Value characters
+		public bool PrepareBuffer(int val)
+		{
+			if (buffStr == null)
+				return false;
+
+			if (buffStr.Length < val && EndOfStream)
+				FillBuffer();
+
+			return buffStr.Length >= val;
+		}
+
+		// Extract text until chars found in StopChars
+		public void ReadText(String outStr, String stopChars, XmlExtractTextOption options)
+		{
+			outStr.Clear();
+
+			if (buffStr == null)
+				return;
+			
+			int tmpIdx = 0;
+			int newLineIdx = 0;
+			int postNewLineIdx = 0;
+			int stopCharLen = stopChars.Length;
+			int prevLen = 0;
+			bool found = false;
+
+			while (true) {
+				if (options.HasFlag(.StopString) && newLineIdx + stopCharLen > buffStr.Length && EndOfStream)
+					FillBuffer();
+
+				if (newLineIdx >= buffStr.Length) {
+					if (EndOfStream) {
+						postNewLineIdx = newLineIdx;
+						break;
+					} else {
+						prevLen = buffStr.Length;
+						FillBuffer();
+
+						// Break if no more data
+						if (buffStr.Length == 0 || buffStr.Length == prevLen)
+							break;
+					}
+				}
+
+				if (options.HasFlag(.StopString)) {
+					if (newLineIdx + stopCharLen - 1 < buffStr.Length) {
+						found = true;
+						tmpIdx = newLineIdx;
+
+						for (int i = 0; i < stopCharLen; i++) {
+							if (buffStr[tmpIdx] != stopChars[i]) {
+								found = false;
+								break;
+							} else {
+								tmpIdx++;
+							}
+						}
+
+						if (found) {
+							postNewLineIdx = newLineIdx;
+
+							if (options.HasFlag(.DeleteStopChar))
+								postNewLineIdx += stopCharLen;
+
+							break;
+						}
+					}
+				} else {
+					found = false;
+
+					for (int i = 0; i < stopCharLen; i++) {
+						if (buffStr[newLineIdx] == stopChars[i]) {
+							postNewLineIdx = newLineIdx;
+
+							if (options.HasFlag(.DeleteStopChar))
+								postNewLineIdx++;
+
+							found = true;
+							break;
+						}
+					}
+
+					if (found)
+						break;
+				}
+
+				newLineIdx++;
+			}
+
+			if (newLineIdx > 0)
+				outStr.Append(buffStr.Ptr, newLineIdx);
+
+			buffStr.Remove(0, postNewLineIdx);
+		}
+
+		// Returns fist char but does not removes it from the buffer
+		public void FirstChar(String outStr)
+		{
+			outStr.Clear();
+
+			if (PrepareBuffer(1))
+				outStr.Append(buffStr[0]);
+		}
+
+		// Proceed with the next character(s) (value optional, default 1)
+		public void IncCharPos(int val = 1)
+		{
+			if (PrepareBuffer(val))
+				buffStr.Remove(0, val);
+		}
+
+		// Returns True if the first upper-cased characters at the current position match Value
+		public bool IsUppercaseText(String val)
+		{
+			int valLen = val.Length;
+			String tmp = scope:: .();
+
+			if (PrepareBuffer(valLen)) {
+				tmp.Append(buffStr.Ptr, valLen);
+
+				if (tmp.Equals(val, .Ordinal)) {
+					buffStr.Remove(0, valLen);
+					return true;
+				}
+			}
+
+			return false;
+		}
 	}
 
 	public class XmlAttribute
 	{
 		public XmlAttrType AttrType = .Flag;
 
-		public String _name = new .() ~ delete _;
+		String _name = new .() ~ delete _;
 		public String Name
 		{
 			get { return _name; }
 			set { _name.Set(value); }
 		}
 
-		protected String _value = new .() ~ delete _;
+		String _value = new .() ~ delete _;
 		public String Value
 		{
 			get { return _value; }
@@ -124,7 +285,7 @@ namespace Xml_Beef
 	public class XmlAttributeList : List<XmlAttribute>
 	{
 		// The xml document that this attribute list belongs to
-		protected Xml _document;
+		Xml _document;
 		public Xml Document
 		{
 			get { return _document; }
@@ -189,14 +350,6 @@ namespace Xml_Beef
 
 	public class XmlNode
 	{
-		// The xml document that this node belongs to
-		protected Xml _document;
-		public Xml Document
-		{
-			get { return _document; }
-			set { _document = AttributeList.Document = ChildNodes.Document = value; }
-		}
-
 		// All the attributes of this node
 		public readonly XmlAttributeList AttributeList;
 		
@@ -205,9 +358,17 @@ namespace Xml_Beef
 
 		// The node type, see TXmlNodeType
 		public XmlNodeType NodeType;
+		
+		// The xml document that this node belongs to
+		Xml _document;
+		public Xml Document
+		{
+			get { return _document; }
+			set { _document = AttributeList.Document = ChildNodes.Document = value; }
+		}
 
 		// Parent node, may be null
-		public XmlNode _parent;
+		XmlNode _parent;
 		public XmlNode Parent
 		{
 			get { return _parent; }
@@ -215,7 +376,7 @@ namespace Xml_Beef
 		}
 
 		// Name of the node
-		public String _name = new .() ~ delete _;
+		String _name = new .() ~ delete _;
 		public String Name
 		{
 			get { return _name; }
@@ -223,7 +384,7 @@ namespace Xml_Beef
 		}
 
 		// Text value of the node
-		public String _text = new .() ~ delete _;
+		String _text = new .() ~ delete _;
 		public String Text
 		{
 			get { return _text; }
@@ -259,7 +420,8 @@ namespace Xml_Beef
 		public XmlNode Find(String name, XmlNodeType types = .Element) => ChildNodes.Find(name, types);
 
 		// Find a child node by name and attribute name
-		public XmlNode Find(String name, String attrName, XmlNodeType types = .Element) => ChildNodes.Find(name, attrName, types);
+		public XmlNode Find(String name, String attrName, XmlNodeType types = .Element) =>
+			ChildNodes.Find(name, attrName, types);
 
 		// Find a child node by name, attribute name and attribute value
 		public XmlNode Find(String name, String attrName, String attrValue, XmlNodeType types = .Element) =>
@@ -289,9 +451,9 @@ namespace Xml_Beef
 		}
 
 		// Setting the node name
-		public XmlNode SetName(String value)
+		public XmlNode SetName(String val)
 		{
-			_name.Set(value);
+			_name.Set(val);
 			return this;
 		}
 
@@ -309,7 +471,7 @@ namespace Xml_Beef
 		}
 
 		// Setting a node attribute flag by attribute name
-		public XmlNode SetAttribute(String name, String value)
+		public XmlNode SetAttribute(String name, String val)
 		{
 			XmlAttribute attr = AttributeList.Find(name);
 
@@ -318,7 +480,7 @@ namespace Xml_Beef
 
 			attr.AttrType = .Value;
 			attr.Name = name;
-			attr.Value = value;
+			attr.Value = val;
 			return this;
 		}
 
@@ -415,14 +577,14 @@ namespace Xml_Beef
 	public class XmlNodeList : List<XmlNode>
 	{
 		// The xml document that this nodeList belongs to
-		protected Xml _document;
+		Xml _document;
 		public Xml Document
 		{
 			get { return _document; }
 			set { _document = value; }
 		}
 
-		protected XmlNode _parent;
+		XmlNode _parent;
 		public XmlNode Parent
 		{
 			get { return _parent; }
@@ -431,10 +593,10 @@ namespace Xml_Beef
 
 		
 		// Adds a node and sets the parent of the node to the parent of the list
-		public new int Add(XmlNode value)
+		public new int Add(XmlNode val)
 		{
-			value.Parent = _parent;
-			base.Add(value);
+			val.Parent = _parent;
+			base.Add(val);
 			return Count - 1;
 		}
 
@@ -563,13 +725,52 @@ namespace Xml_Beef
 
 	public class Xml
 	{
-		protected XmlNode _root;
-		protected XmlNode _header;
-		protected XmlNode _documentElement;
-		protected bool _skipIndent;
+		XmlNode _root = null;
+		XmlNode _header = null;
+		XmlNode _documentElement = null;
+		bool _skipIndent = false;
 
 		public String LineBreak = new .(Environment.NewLine) ~ delete _;
-		public XmlOptions Options = .NodeAutoIndent | .WriteBOM;
+		public XmlOption Options = .NodeAutoIndent | .WriteBOM;
+		
+		// A list of all root nodes of the document
+		public XmlNodeList ChildNodes
+		{
+			get { return _root.ChildNodes; }
+		}
+
+		// Returns the first element node
+		public XmlNode DocumentElement
+		{
+			get { return _documentElement; }
+			set
+			{
+				_documentElement = value;
+
+				if (value.Parent == null)
+					_root.ChildNodes.Add(value);
+			}
+		}
+
+		// XML declarations are stored in here as Attributes
+		public XmlNode Header
+		{
+			get { return _header; }
+		}
+
+		// Set to True if all spaces and linebreaks should be included as a text node, same as doPreserve option
+		public bool PreserveWhitespace
+		{
+			get { return Options.HasFlag(.PreserveWhiteSpace); }
+			set
+			{
+				if (value) {
+					Options |= .PreserveWhiteSpace;
+				} else {
+					Options &= ~.PreserveWhiteSpace;
+				}
+			}
+		}
 
 		public this()
 		{
@@ -582,33 +783,233 @@ namespace Xml_Beef
 
 		public ~this()
 		{
+			_root.Parent = null;
+			Clear();
 			delete _root;
-			delete _header;
-			delete _documentElement;
-		}
 
-		public void CreateHeaderNode()
-		{
 			if (_header != null)
-				return;
+				delete _header;
 
-			_header = new .();
-			_header.SetAttribute("version", "1.0");
-			_header.SetAttribute("encoding", "utf-8");
+			if (_documentElement != null)
+				delete _documentElement;
 		}
 
-		public void FromText()
+		private void Parse(XmlStreamReader reader)
 		{
+			Clear();
+			XmlNode parent = _root;
+			String line = scope:: .();
 
-		}
+			while (!reader.EndOfStream) {
+				line.Clear();
+				reader.ReadText(line, "<", .DeleteStopChar);
 
-		public void AsString(String outStr)
-		{
-			// _header.AttributeList.AsString(outStr);
+				if (!String.IsNullOrWhiteSpace(line)) { // Check for text nodes
+					ParseText(line, parent);
 
-			for (XmlNode child in _root.ChildNodes) {
-				Walk(outStr, "", child);
+					// if no chars available then exit
+					if (reader.EndOfStream)
+						break;
+				}
+
+				String firstChar = scope:: .();
+				reader.FirstChar(firstChar);
+
+				if (firstChar.Equals("!")) {
+					if (reader.IsUppercaseText("!--")) {  // check for a comment node
+						ParseComment(reader, ref parent);
+					} else if (reader.IsUppercaseText("!DOCTYPE")) { // check for a doctype node
+						ParseDocType(reader, ref parent);
+					} else if (reader.IsUppercaseText("![CDATA[")) { // check for a cdata node
+						ParseCData(reader, ref parent);
+					} else { // try to parse as tag
+						ParseTag(reader, false, ref parent);
+					} 
+				} else { // Check for XML header / processing instructions
+					if (firstChar.Equals("?")) { // could be header or processing instruction
+						ParseProcessingInstr(reader, ref parent);
+					} else if (firstChar.Length != 0) { // Parse a tag, the first tag in a document is the DocumentElement
+						XmlNode node = ParseTag(reader, true, ref parent);
+
+						if (_documentElement == null && parent == _root)
+							_documentElement = node;
+					}
+				}
 			}
+		}
+
+		private void ParseComment(XmlStreamReader reader, ref XmlNode parent)
+		{
+			XmlNode node = parent.ChildNodes.Add(.Comment);
+			reader.ReadText(node.Text, "-->", .DeleteStopChar | .StopString);
+		}
+
+		private void ParseDocType(XmlStreamReader reader, ref XmlNode parent)
+		{
+			XmlNode node = parent.ChildNodes.Add(.DocType);
+			reader.ReadText(node.Text, ">[", .None);
+
+			if (!reader.EndOfStream) {
+				String quote = scope:: .();
+				reader.FirstChar(quote);
+				reader.IncCharPos();
+
+				if (quote.Equals("[")) {
+					String tmp = scope:: .();
+
+					reader.ReadText(node.Text, "]", .DeleteStopChar);
+					node.Text.AppendF("{}{}", quote, tmp);
+
+					reader.ReadText(node.Text, ">", .DeleteStopChar);
+					node.Text.AppendF("]{}", tmp);
+				}
+			}
+		}
+
+		private void ParseProcessingInstr(XmlStreamReader reader, ref XmlNode parent)
+		{
+			reader.IncCharPos(); // omit the '?'
+			String tag = scope:: .();
+			reader.ReadText(tag, "?>", .DeleteStopChar | .StopString);
+			XmlNode node = ParseTag(tag, ref parent);
+
+			if (node.Name.Equals("xml", .OrdinalIgnoreCase)) {
+				_header = node;
+				_header.NodeType = .XmlDecl;
+			} else {
+				node.NodeType = .ProcessingInstruction;
+
+				if (!Options.HasFlag(.ParseProcessingInstruction)) {
+					node.Text = tag;
+					DeleteAndClearItems!(node.AttributeList);
+				}
+			}
+
+			parent = node.Parent;
+		}
+
+		private void ParseCData(XmlStreamReader reader, ref XmlNode parent)
+		{
+			XmlNode node = parent.ChildNodes.Add(.CDataSection);
+			reader.ReadText(node.Text, "]]>", .DeleteStopChar | .StopString);
+		}
+
+		private void ParseText(String line, XmlNode parent)
+		{
+			/*
+			var
+			  SingleChar: Char;
+			  Node: TXmlNode;
+			  TextNode: Boolean;
+			begin
+			  if PreserveWhiteSpace then
+			    TextNode := True
+			  else
+			  begin
+			    TextNode := False;
+			    for SingleChar in Line do
+			      if AnsiStrScan(TXmlSpaces, SingleChar) = NIL then
+			      begin
+			        TextNode := True;
+			        Break;
+			      end;
+			  end;
+
+			  if TextNode then
+			  begin
+			    Node := Parent.ChildNodes.Add(ntText);
+			    Node.Text := Line;
+			  end;
+			*/
+		}
+
+		private XmlNode ParseTag(XmlStreamReader reader, bool parseText, ref XmlNode parent)
+		{
+			String tag = scope:: .();
+			reader.ReadText(tag, ">", .DeleteStopChar);
+			XmlNode node = ParseTag(tag, ref parent);
+
+			if (node == parent && parseText) { // only non-self closing nodes may have a text
+				String line = scope:: .();
+				reader.ReadText(line, "<", .None);
+				UnescapeStr(line);
+
+				if (PreserveWhitespace) {
+					node.Text = line;
+				} else {
+					bool found = false;
+
+					for (int i = 0; i < line.Length; i++) {
+						for (char8 char in CXmlSpaces) {
+							if (line[i] == char) {
+								found = true;
+								break;
+							}
+						}
+
+						if (!found) {
+							node.Text = line;
+							break;
+						}
+					}
+				}
+			}
+
+			return node;
+		}
+
+		private XmlNode ParseTag(String tagStr, ref XmlNode parent)
+		{
+			/*
+			var
+			  Node: TXmlNode;
+			  ALine: String;
+			  CharPos: Integer;
+			  Tag: String;
+			begin
+			  // A closing tag does not have any attributes nor text
+			  if (TagStr <> '') and (TagStr[LowStr] = '/') then
+			  begin
+			    Result := Parent;
+			    Parent := Parent.Parent;
+			    Exit;
+			  end;
+
+			  // Creat a new new ntElement node
+			  Node := Parent.ChildNodes.Add;
+			  Result := Node;
+			  Tag := TagStr;
+
+			  // Check for a self-closing Tag (does not have any text)
+			  if (Tag <> '') and (Tag[High(Tag)] = '/') then
+			    Delete(Tag, Length(Tag), 1)
+			  else
+			    Parent := Node;
+
+			  CharPos := Pos(' ', Tag);
+			  if CharPos <> 0 then // Tag may have attributes
+			  begin
+			    ALine := Tag;
+			    Delete(Tag, CharPos, Length(Tag));
+			    Delete(ALine, 1, CharPos);
+			    if ALine <> '' then
+			      ParseAttributes(ALine, Node.AttributeList);
+			  end;
+
+			  Node.Name := Tag;
+			*/
+			return null;
+		}
+
+		private void Compose(String outStr)
+		{
+			if (Options.HasFlag(.Compact))
+				LineBreak.Clear();
+
+			_skipIndent = false;
+
+			for (XmlNode child in _root.ChildNodes)
+				Walk(outStr, "", child);
 		}
 
 		private void Walk(String outStr, StringView prefix, XmlNode node)
@@ -703,10 +1104,324 @@ namespace Xml_Beef
 			}
 		}
 
-		public static void EscapeStr(String value)
+		public void SetText(String val) => FromString(val);
+
+		public void GetText(String outStr) => AsString(outStr);
+
+		public void SetEncoding(String val)
 		{
-			XmlAttribute.EscapeStr(value);
-			value.Replace("'", "&apos;");
+			CreateHeaderNode();
+			_header["encoding"] = val;
+		}
+
+		public void GetEncoding(String outStr)
+		{
+			outStr.Clear();
+
+			if (_header != null)
+				outStr.AppendF(_header["encoding"]);
+		}
+
+		public void SetVersion(String val)
+		{
+			CreateHeaderNode();
+			_header["version"] = val;
+		}
+
+		public void GetVersion(String outStr)
+		{
+			outStr.Clear();
+
+			if (_header != null)
+				outStr.AppendF(_header["version"]);
+		}
+
+		public void SetStandAlone(String val)
+		{
+			CreateHeaderNode();
+			_header["standalone"] = val;
+		}
+
+		public void GetStandAlone(String outStr)
+		{
+			outStr.Clear();
+
+			if (_header != null)
+				outStr.AppendF(_header["standalone"]);
+		}
+
+		private void CreateHeaderNode()
+		{
+			if (_header != null)
+				return;
+
+			_header = new .();
+			_header.SetAttribute("version", "1.0");
+			_header.SetAttribute("encoding", "utf-8");
+		}
+
+		private String ExtractText(ref String Line, String StopChars, XmlExtractTextOption Options)
+		{
+			/*
+			var
+			  CharPos, FoundPos: Integer;
+			  TestChar: Char;
+			begin
+			  FoundPos := 0;
+			  for TestChar in StopChars do
+			  begin
+			    CharPos := Pos(TestChar, Line);
+			    if (CharPos <> 0) and ((FoundPos = 0) or (CharPos < FoundPos)) then
+			      FoundPos := CharPos;
+			  end;
+
+			  if FoundPos <> 0 then
+			  begin
+			    Dec(FoundPos);
+			    Result := Copy(Line, 1, FoundPos);
+			    if etoDeleteStopChar in Options then
+			      Inc(FoundPos);
+			    Delete(Line, 1, FoundPos);
+			  end
+			  else
+			  begin
+			    Result := Line;
+			    Line := '';
+			  end;
+			*/
+			return null;
+		}
+
+		// Deletes all nodes
+		public void Clear()
+		{
+			_documentElement = null;
+
+			if (_header != null) {
+				delete _header;
+				_header = null;
+			}
+
+			_root.Clear();
+		}
+
+		// Adds a new node to the document, if it's the first ntElement then sets it as .DocumentElement
+		public XmlNode AddChild(String name, XmlNodeType type = .Element)
+		{
+			/*
+			Result := CreateNode(Name, NodeType);
+			if (NodeType = ntElement) and (not Assigned(FDocumentElement)) then
+			  FDocumentElement := Result;
+			try
+			  Root.ChildNodes.Add(Result);
+			except
+			  Result.Free;
+			  raise;
+			end;
+			Result.Document := Self;
+			*/
+			return null;
+		}
+
+		// Creates a new node but doesn't adds it to the document nodes
+		public XmlNode CreateNode(String name, XmlNodeType type = .Element)
+		{
+			XmlNode node = new .(type);
+			node.Name = name;
+			node.Document = this;
+			return node;
+		}
+
+		// Loads the XML from a file
+		public Xml LoadFromFile(String fileName, int buffSize = 4096)
+		{
+			/*
+			var
+			  Stream: TFileStream;
+			begin
+			  Stream := TFileStream.Create(FileName, fmOpenRead + fmShareDenyWrite);
+			  try
+			    LoadFromStream(Stream, BufferSize);
+			  finally
+			    Stream.Free;
+			  end;
+			  Result := Self;
+			*/
+			return null;
+		}
+
+		// Loads the XML from a stream
+		public Xml LoadFromStream(Stream stream, int buffSize = 4096)
+		{
+			/*
+			var
+			  Reader: TXmlStreamReader;
+			begin
+			  if Encoding = '' then // none specified then use UTF8 with DetectBom
+			    Reader := TXmlStreamReader.Create(Stream, TEncoding.UTF8, True, BufferSize)
+			  else
+			  if AnsiSameText(Encoding, 'utf-8') then
+			    Reader := TXmlStreamReader.Create(Stream, TEncoding.UTF8, False, BufferSize)
+			  else
+			    Reader := TXmlStreamReader.Create(Stream, TEncoding.ANSI, False, BufferSize);
+			  try
+			    Parse(Reader);
+			  finally
+			    Reader.Free;
+			  end;
+			  Result := Self;
+			*/
+			return null;
+		}
+
+		// Parse attributes into the attribute list for a given string
+		public void ParseAttributes(String attribStr, XmlAttributeList attributeList)
+		{
+			/*
+			var
+			  Attribute: TXmlAttribute;
+			  AttrName, AttrText: String;
+			  Quote: String;
+			  Value: String;
+			begin
+			  Value := TrimLeft(AttribStr);
+			  while Value <> '' do
+			  begin
+			    AttrName := ExtractText(Value, ' =', []);
+			    Value := TrimLeft(Value);
+
+			    Attribute := AttributeList.Add(AttrName);
+			    if (Value = '') or (Value[LowStr]<>'=') then
+			      Continue;
+
+			    Delete(Value, 1, 1);
+			    Attribute.AttributeType := atValue;
+			    ExtractText(Value, '''' + '"', []);
+			    Value := TrimLeft(Value);
+			    if Value <> '' then
+			    begin
+			      Quote := Value[LowStr];
+			      Delete(Value, 1, 1);
+			      AttrText := ExtractText(Value, Quote, [etoDeleteStopChar]); // Get Attribute Value
+			      Attribute.Value := Unescape(AttrText);
+			      Value := TrimLeft(Value);
+			    end;
+			  end;
+			*/
+		}
+
+		// Saves the XML to a file
+		public Xml SaveToFile(String fileName)
+		{
+			/*
+			var
+			  Stream: TFileStream;
+			begin
+			  Stream := TFileStream.Create(FileName, fmCreate);
+			  try
+			    SaveToStream(Stream);
+			  finally
+			    Stream.Free;
+			  end;
+			  Result := Self;
+			*/
+			return null;
+		}
+
+		// Saves the XML to a stream, the encoding is specified in the .Encoding property
+		public Xml SaveToStream(Stream stream)
+		{
+			/*
+			var
+			  Writer: TStreamWriter;
+			begin
+			  if AnsiSameText(Self.Encoding, 'utf-8') then
+			    if doWriteBOM in Options then
+			      Writer := TStreamWriter.Create(Stream, TEncoding.UTF8)
+			    else
+			      Writer := TStreamWriter.Create(Stream)
+			  else
+			    Writer := TStreamWriter.Create(Stream, TEncoding.ANSI);
+			  try
+			    Compose(Writer);
+			  finally
+			    Writer.Free;
+			  end;
+			  Result := Self;
+			*/
+			return null;
+		}
+
+		public void FromString(String val)
+		{
+			/*
+			var
+			  Stream: TStringStream;
+			begin
+			  Stream := TStringStream.Create('', TEncoding.UTF8);
+			  try
+			    Stream.WriteString(Value);
+			    Stream.Position := 0;
+			    LoadFromStream(Stream);
+			  finally
+			    Stream.Free;
+			  end;
+			*/
+		}
+
+		public void AsString(String outStr)
+		{
+			/*
+			var
+			  Stream: TStringStream;
+			begin
+			  if AnsiSameText(Encoding, 'utf-8') then
+			    Stream := TStringStream.Create('', TEncoding.UTF8)
+			  else
+			    Stream := TStringStream.Create('', TEncoding.ANSI);
+			  try
+			    SaveToStream(Stream);
+			    Result := Stream.DataString;
+			  finally
+			    Stream.Free;
+			  end;
+			*/
+			// _header.AttributeList.AsString(outStr);
+
+			for (XmlNode child in _root.ChildNodes) {
+				Walk(outStr, "", child);
+			}
+		}
+		
+		// Escapes XML control characters
+		public static void EscapeStr(String val)
+		{
+			XmlAttribute.EscapeStr(val);
+			val.Replace("'", "&apos;");
+		}
+
+		[Inline]
+		public static void EscapeStr(StringView inStr, String outStr)
+		{
+			outStr.Set(inStr);
+			EscapeStr(outStr);
+		}
+
+		// Translates escaped characters back into XML control characters
+		public static void UnescapeStr(String val)
+		{
+  			val.Replace("&lt;", "<");
+  			val.Replace("&gt;", ">");
+  			val.Replace("&quot;", "\"");
+  			val.Replace("&apos;", "'");
+  			val.Replace("&amp;", "&");
+		}
+
+		[Inline]
+		public static void UnescapeStr(StringView inStr, String outStr)
+		{
+			outStr.Set(inStr);
+			UnescapeStr(outStr);
 		}
 
 #if DEBUG
