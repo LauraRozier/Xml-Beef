@@ -13,12 +13,6 @@ using System.Text;
 
 namespace Xml_Beef
 {
-	static
-	{
-		// 0x20 (' '), 0x0A ('\n'), 0x0D ('\r') and 0x09 ('\t') ordered by most commonly used, to speed searches up
-		private const char8[4] CXmlSpaces = .('\x20', '\x0A', '\x0D', '\x09');
-	}
-
 	enum XmlNodeType
 	{
 		None                  = 0x0000,
@@ -64,6 +58,15 @@ namespace Xml_Beef
 	class XmlStreamReader : StreamReader
 	{
 		String buffStr = new .() ~ delete _;
+
+		public this() { }
+
+		[AllowAppend]
+		public this(Stream stream, Encoding encoding, bool detectBOM, int32 bufferSize, bool ownsSteam = false) :
+			base(stream, encoding, detectBOM, bufferSize, ownsSteam) { }
+
+		[AllowAppend]
+		public this(Stream stream) : base(stream, .UTF8, false, 4096) { }
 
 		void FillBuffer()
 		{
@@ -285,7 +288,7 @@ namespace Xml_Beef
 	public class XmlAttributeList : List<XmlAttribute>
 	{
 		// The xml document that this attribute list belongs to
-		Xml _document;
+		Xml _document = null;
 		public Xml Document
 		{
 			get { return _document; }
@@ -360,7 +363,7 @@ namespace Xml_Beef
 		public XmlNodeType NodeType;
 		
 		// The xml document that this node belongs to
-		Xml _document;
+		Xml _document = null;
 		public Xml Document
 		{
 			get { return _document; }
@@ -368,7 +371,7 @@ namespace Xml_Beef
 		}
 
 		// Parent node, may be null
-		XmlNode _parent;
+		XmlNode _parent = null;
 		public XmlNode Parent
 		{
 			get { return _parent; }
@@ -412,8 +415,15 @@ namespace Xml_Beef
 		public void Clear()
 		{
 			_text.Clear();
+
 			DeleteAndClearItems!(AttributeList);
-			DeleteAndClearItems!(ChildNodes);
+
+			for (var value in ChildNodes) {
+				if (Document.Header != value)
+					delete value;
+			}
+
+			ChildNodes.Clear();
 		}
 
 		// Find a child node by its name
@@ -725,6 +735,9 @@ namespace Xml_Beef
 
 	public class Xml
 	{
+		// 0x20 (' '), 0x0A ('\n'), 0x0D ('\r') and 0x09 ('\t') ordered by most commonly used, to speed searches up
+		private static readonly char8[] CXmlSpaces = new .('\x20', '\x0A', '\x0D', '\x09') ~ delete _;
+
 		XmlNode _root = null;
 		XmlNode _header = null;
 		XmlNode _documentElement = null;
@@ -896,31 +909,20 @@ namespace Xml_Beef
 
 		private void ParseText(String line, XmlNode parent)
 		{
-			/*
-			var
-			  SingleChar: Char;
-			  Node: TXmlNode;
-			  TextNode: Boolean;
-			begin
-			  if PreserveWhiteSpace then
-			    TextNode := True
-			  else
-			  begin
-			    TextNode := False;
-			    for SingleChar in Line do
-			      if AnsiStrScan(TXmlSpaces, SingleChar) = NIL then
-			      begin
-			        TextNode := True;
-			        Break;
-			      end;
-			  end;
+			bool textNode;
 
-			  if TextNode then
-			  begin
-			    Node := Parent.ChildNodes.Add(ntText);
-			    Node.Text := Line;
-			  end;
-			*/
+			if (PreserveWhitespace) {
+				textNode = true;
+			} else {
+				textNode = false;
+
+				if (line.IndexOfAny(CXmlSpaces) > -1)
+					textNode = true;
+			}
+
+			if (textNode)
+				parent.ChildNodes.Add(.Text)
+					.Text = line;
 		}
 
 		private XmlNode ParseTag(XmlStreamReader reader, bool parseText, ref XmlNode parent)
@@ -933,7 +935,7 @@ namespace Xml_Beef
 				String line = scope:: .();
 				reader.ReadText(line, "<", .None);
 				UnescapeStr(line);
-
+				
 				if (PreserveWhitespace) {
 					node.Text = line;
 				} else {
@@ -960,48 +962,72 @@ namespace Xml_Beef
 
 		private XmlNode ParseTag(String tagStr, ref XmlNode parent)
 		{
-			/*
-			var
-			  Node: TXmlNode;
-			  ALine: String;
-			  CharPos: Integer;
-			  Tag: String;
-			begin
-			  // A closing tag does not have any attributes nor text
-			  if (TagStr <> '') and (TagStr[LowStr] = '/') then
-			  begin
-			    Result := Parent;
-			    Parent := Parent.Parent;
-			    Exit;
-			  end;
+			XmlNode node;
 
-			  // Creat a new new ntElement node
-			  Node := Parent.ChildNodes.Add;
-			  Result := Node;
-			  Tag := TagStr;
+			// A closing tag does not have any attributes nor text
+			if (tagStr.Length > 0 && tagStr.StartsWith('/')) {
+				node = parent;
+				parent = parent.Parent;
+				return node;
+			}
+			
+			// Create a new new .Element node
+			node = parent.ChildNodes.Add();
+			String tag = scope:: .(tagStr);
 
-			  // Check for a self-closing Tag (does not have any text)
-			  if (Tag <> '') and (Tag[High(Tag)] = '/') then
-			    Delete(Tag, Length(Tag), 1)
-			  else
-			    Parent := Node;
+			if (tag.Length > 0 && tag.EndsWith('/')) {
+				tag.RemoveFromEnd(1);
+			} else {
+				parent = node;
+			}
 
-			  CharPos := Pos(' ', Tag);
-			  if CharPos <> 0 then // Tag may have attributes
-			  begin
-			    ALine := Tag;
-			    Delete(Tag, CharPos, Length(Tag));
-			    Delete(ALine, 1, CharPos);
-			    if ALine <> '' then
-			      ParseAttributes(ALine, Node.AttributeList);
-			  end;
+			int charPos = tag.IndexOf(' ');
 
-			  Node.Name := Tag;
-			*/
-			return null;
+			if (charPos > -1) { // Tag may have attributes
+				String line = scope:: .();
+				line.Append(tag, charPos);
+				tag.RemoveToEnd(charPos);
+
+				if (line.Length > 0)
+					ParseAttributes(line, node.AttributeList);
+			}
+
+			node.Name = tag;
+			return node;
 		}
 
-		private void Compose(String outStr)
+		// Parse attributes into the attribute list for a given string
+		public void ParseAttributes(String attribStr, XmlAttributeList attributeList)
+		{
+			String value = scope:: .(attribStr);
+			value.TrimStart();
+
+			while (value.Length > 0) {
+				String attrName = scope:: .();
+				ExtractText(attrName, value, "= ", .None);
+				value.TrimStart();
+				XmlAttribute attr = attributeList.Add(attrName);
+
+				if (value.Length == 0 || !value.StartsWith('='))
+					continue;
+
+				value.Remove(0);
+				attr.AttrType = .Value;
+				String dummy = scope:: .();
+				ExtractText(dummy, value, "'\"", .None);
+				value.TrimStart();
+
+				if (value.Length > 0) {
+					String quote = scope:: .(value, 0, 1);
+					value.Remove(0);
+					ExtractText(attr.Value, value, quote, .DeleteStopChar); // Get Attribute Value
+					UnescapeStr(attr.Value);
+					value.TrimStart();
+				}
+			}
+		}
+
+		private void Compose(StreamWriter writer)
 		{
 			if (Options.HasFlag(.Compact))
 				LineBreak.Clear();
@@ -1009,38 +1035,38 @@ namespace Xml_Beef
 			_skipIndent = false;
 
 			for (XmlNode child in _root.ChildNodes)
-				Walk(outStr, "", child);
+				Walk(writer, "", child);
 		}
 
-		private void Walk(String outStr, StringView prefix, XmlNode node)
+		private void Walk(StreamWriter writer, StringView prefix, XmlNode node)
 		{
 			if ((node == _root.ChildNodes.Front) || (_skipIndent)) {
-				outStr.Append('<');
+				writer.Write("<");
 				_skipIndent = false;
 			} else {
-				outStr.AppendF("{}{}{}", LineBreak, prefix, '<');
+				writer.Write("{}{}{}", LineBreak, prefix, '<');
 			}
 
 			switch (node.NodeType)
 			{
 				case .Comment:
 				{
-					outStr.AppendF("!--{}-->", node.Text);
+					writer.Write("!--{}-->", node.Text);
 					return;
 				}
 				case .DocType:
 				{
-					outStr.AppendF("!DOCTYPE {}>", node.Text);
+					writer.Write("!DOCTYPE {}>", node.Text);
 					return;
 				}
 				case .CDataSection:
 				{
-					outStr.AppendF("<![CDATA[{}]]>", node.Text);
+					writer.Write("<![CDATA[{}]]>", node.Text);
 					return;
 				}
 				case .Text:
 				{
-					outStr.Append(node.Text);
+					writer.Write(node.Text);
 					_skipIndent = true;
 					return;
 				}
@@ -1049,9 +1075,9 @@ namespace Xml_Beef
 					if (node.AttributeList.Count > 0) {
 						String tmp = scope:: .();
 						node.AttributeList.AsString(tmp);
-						outStr.AppendF("?{}{}?>", node.Name, tmp);
+						writer.Write("?{}{}?>", node.Name, tmp);
 					} else {
-						outStr.AppendF("?{}?>", node.Text);
+						writer.Write("?{}?>", node.Text);
 					}
 
 					return;
@@ -1060,7 +1086,7 @@ namespace Xml_Beef
 				{
 					String tmp = scope:: .();
 					node.AttributeList.AsString(tmp);
-					outStr.AppendF("?{}{}?>", node.Name, tmp);
+					writer.Write("?{}{}?>", node.Name, tmp);
 					return;
 				}
 				default: {}
@@ -1068,20 +1094,20 @@ namespace Xml_Beef
 
 			String tmp = scope:: .();
 			node.AttributeList.AsString(tmp);
-			outStr.AppendF("{}{}", node.Name, tmp);
+			writer.Write("{}{}", node.Name, tmp);
 
 			// Self closing tags
 			if (String.IsNullOrWhiteSpace(node.Text) && !node.HasChildNodes) {
-				outStr.Append("/>");
+				writer.Write("/>");
 				return;
 			}
 
-			outStr.Append(">");
+			writer.Write(">");
 
 			if (!String.IsNullOrWhiteSpace(node.Text)) {
 				tmp.Set(node.Text);
 				EscapeStr(tmp);
-				outStr.Append(tmp);
+				writer.Write(tmp);
 
 				if (node.HasChildNodes)
 					_skipIndent = true;
@@ -1095,18 +1121,18 @@ namespace Xml_Beef
 
 			// Process child nodes
 			for (XmlNode child in node.ChildNodes)
-				Walk(outStr, indent, child);
+				Walk(writer, indent, child);
 
 			if (node.HasChildNodes && !_skipIndent) {
-				outStr.AppendF("{}{}</{}>", LineBreak, prefix, node.Name);
+				writer.Write("{}{}</{}>", LineBreak, prefix, node.Name);
 			} else {
-				outStr.AppendF("</{}>", node.Name);
+				writer.Write("</{}>", node.Name);
 			}
 		}
 
-		public void SetText(String val) => FromString(val);
+		public void SetText(String val) => LoadFromString(val);
 
-		public void GetText(String outStr) => AsString(outStr);
+		public void GetText(String outStr) => SaveToString(outStr);
 
 		public void SetEncoding(String val)
 		{
@@ -1156,48 +1182,42 @@ namespace Xml_Beef
 				return;
 
 			_header = new .();
-			_header.SetAttribute("version", "1.0");
-			_header.SetAttribute("encoding", "utf-8");
+			_header["version"] = "1.0";
+			_header["encoding"] = "utf-8";
 		}
 
-		private String ExtractText(ref String Line, String StopChars, XmlExtractTextOption Options)
+		private void ExtractText(String outStr, String line, String stopChars, XmlExtractTextOption options)
 		{
-			/*
-			var
-			  CharPos, FoundPos: Integer;
-			  TestChar: Char;
-			begin
-			  FoundPos := 0;
-			  for TestChar in StopChars do
-			  begin
-			    CharPos := Pos(TestChar, Line);
-			    if (CharPos <> 0) and ((FoundPos = 0) or (CharPos < FoundPos)) then
-			      FoundPos := CharPos;
-			  end;
+			int foundPos = -1;
+			int charPos;
 
-			  if FoundPos <> 0 then
-			  begin
-			    Dec(FoundPos);
-			    Result := Copy(Line, 1, FoundPos);
-			    if etoDeleteStopChar in Options then
-			      Inc(FoundPos);
-			    Delete(Line, 1, FoundPos);
-			  end
-			  else
-			  begin
-			    Result := Line;
-			    Line := '';
-			  end;
-			*/
-			return null;
+			for (int i = 0; i < stopChars.Length; i++) {
+				charPos = line.IndexOf(stopChars[i]);
+
+				if (charPos > -1 && (foundPos == -1 || charPos < foundPos))
+					foundPos = charPos;
+			}
+
+			if (foundPos > -1) {
+				outStr.Clear();
+				outStr.Append(line, 0, foundPos);
+
+				if (options.HasFlag(.DeleteStopChar))
+					foundPos++;
+
+				line.Remove(0, foundPos);
+			} else {
+				outStr.Set(line);
+				line.Clear();
+			}
 		}
 
 		// Deletes all nodes
 		public void Clear()
 		{
-			_documentElement = null;
+			_documentElement = null; // Always owned by a parent, just deref
 
-			if (_header != null) {
+			if (_header != null && _header.Parent == null) {
 				delete _header;
 				_header = null;
 			}
@@ -1208,19 +1228,14 @@ namespace Xml_Beef
 		// Adds a new node to the document, if it's the first ntElement then sets it as .DocumentElement
 		public XmlNode AddChild(String name, XmlNodeType type = .Element)
 		{
-			/*
-			Result := CreateNode(Name, NodeType);
-			if (NodeType = ntElement) and (not Assigned(FDocumentElement)) then
-			  FDocumentElement := Result;
-			try
-			  Root.ChildNodes.Add(Result);
-			except
-			  Result.Free;
-			  raise;
-			end;
-			Result.Document := Self;
-			*/
-			return null;
+			XmlNode node = CreateNode(name, type);
+
+			if (type == .Element && _documentElement != null)
+				_documentElement = node;
+
+			_root.ChildNodes.Add(node);
+			node.Document = this;
+			return node;
 		}
 
 		// Creates a new node but doesn't adds it to the document nodes
@@ -1232,165 +1247,87 @@ namespace Xml_Beef
 			return node;
 		}
 
-		// Loads the XML from a file
-		public Xml LoadFromFile(String fileName, int buffSize = 4096)
-		{
-			/*
-			var
-			  Stream: TFileStream;
-			begin
-			  Stream := TFileStream.Create(FileName, fmOpenRead + fmShareDenyWrite);
-			  try
-			    LoadFromStream(Stream, BufferSize);
-			  finally
-			    Stream.Free;
-			  end;
-			  Result := Self;
-			*/
-			return null;
-		}
-
 		// Loads the XML from a stream
-		public Xml LoadFromStream(Stream stream, int buffSize = 4096)
+		public Xml LoadFromStream(Stream stream, int32 buffSize = 4096)
 		{
-			/*
-			var
-			  Reader: TXmlStreamReader;
-			begin
-			  if Encoding = '' then // none specified then use UTF8 with DetectBom
-			    Reader := TXmlStreamReader.Create(Stream, TEncoding.UTF8, True, BufferSize)
-			  else
-			  if AnsiSameText(Encoding, 'utf-8') then
-			    Reader := TXmlStreamReader.Create(Stream, TEncoding.UTF8, False, BufferSize)
-			  else
-			    Reader := TXmlStreamReader.Create(Stream, TEncoding.ANSI, False, BufferSize);
-			  try
-			    Parse(Reader);
-			  finally
-			    Reader.Free;
-			  end;
-			  Result := Self;
-			*/
-			return null;
+			XmlStreamReader reader;
+
+			if (_header["encoding"].IsEmpty) { // none specified then use UTF8 with DetectBom
+				reader = new .(stream, .UTF8, true, buffSize);
+			} else if (_header["encoding"].Equals("utf-8", .OrdinalIgnoreCase)) {
+				reader = new .(stream, .UTF8, false, buffSize);
+			} else {
+				reader = new .(stream, .ASCII, false, buffSize);
+			}
+
+			Parse(reader);
+			delete reader;
+			return this;
 		}
 
-		// Parse attributes into the attribute list for a given string
-		public void ParseAttributes(String attribStr, XmlAttributeList attributeList)
+		// Loads the XML from a file
+		public Xml LoadFromFile(String fileName, int32 buffSize = 4096)
 		{
-			/*
-			var
-			  Attribute: TXmlAttribute;
-			  AttrName, AttrText: String;
-			  Quote: String;
-			  Value: String;
-			begin
-			  Value := TrimLeft(AttribStr);
-			  while Value <> '' do
-			  begin
-			    AttrName := ExtractText(Value, ' =', []);
-			    Value := TrimLeft(Value);
+			FileStream stream = new .();
 
-			    Attribute := AttributeList.Add(AttrName);
-			    if (Value = '') or (Value[LowStr]<>'=') then
-			      Continue;
+			if (stream.Open(fileName, .Read, .None) == .Ok) {
+				LoadFromStream(stream, buffSize);
+				stream.Close();
+			}
 
-			    Delete(Value, 1, 1);
-			    Attribute.AttributeType := atValue;
-			    ExtractText(Value, '''' + '"', []);
-			    Value := TrimLeft(Value);
-			    if Value <> '' then
-			    begin
-			      Quote := Value[LowStr];
-			      Delete(Value, 1, 1);
-			      AttrText := ExtractText(Value, Quote, [etoDeleteStopChar]); // Get Attribute Value
-			      Attribute.Value := Unescape(AttrText);
-			      Value := TrimLeft(Value);
-			    end;
-			  end;
-			*/
+			delete stream;
+			return this;
 		}
-
-		// Saves the XML to a file
-		public Xml SaveToFile(String fileName)
+		
+		// Loads the XML from a string
+		public Xml LoadFromString(String val, int32 buffSize = 4096)
 		{
-			/*
-			var
-			  Stream: TFileStream;
-			begin
-			  Stream := TFileStream.Create(FileName, fmCreate);
-			  try
-			    SaveToStream(Stream);
-			  finally
-			    Stream.Free;
-			  end;
-			  Result := Self;
-			*/
-			return null;
+			StringStream stream = new .(val, .Copy);
+
+			if (stream.Seek(0, .Absolute) == .Ok && stream.Length > 0)
+				LoadFromStream(stream, buffSize);
+
+			delete stream;
+			return this;
 		}
 
 		// Saves the XML to a stream, the encoding is specified in the .Encoding property
 		public Xml SaveToStream(Stream stream)
 		{
-			/*
-			var
-			  Writer: TStreamWriter;
-			begin
-			  if AnsiSameText(Self.Encoding, 'utf-8') then
-			    if doWriteBOM in Options then
-			      Writer := TStreamWriter.Create(Stream, TEncoding.UTF8)
-			    else
-			      Writer := TStreamWriter.Create(Stream)
-			  else
-			    Writer := TStreamWriter.Create(Stream, TEncoding.ANSI);
-			  try
-			    Compose(Writer);
-			  finally
-			    Writer.Free;
-			  end;
-			  Result := Self;
-			*/
-			return null;
-		}
+			StreamWriter writer;
 
-		public void FromString(String val)
-		{
-			/*
-			var
-			  Stream: TStringStream;
-			begin
-			  Stream := TStringStream.Create('', TEncoding.UTF8);
-			  try
-			    Stream.WriteString(Value);
-			    Stream.Position := 0;
-			    LoadFromStream(Stream);
-			  finally
-			    Stream.Free;
-			  end;
-			*/
-		}
-
-		public void AsString(String outStr)
-		{
-			/*
-			var
-			  Stream: TStringStream;
-			begin
-			  if AnsiSameText(Encoding, 'utf-8') then
-			    Stream := TStringStream.Create('', TEncoding.UTF8)
-			  else
-			    Stream := TStringStream.Create('', TEncoding.ANSI);
-			  try
-			    SaveToStream(Stream);
-			    Result := Stream.DataString;
-			  finally
-			    Stream.Free;
-			  end;
-			*/
-			// _header.AttributeList.AsString(outStr);
-
-			for (XmlNode child in _root.ChildNodes) {
-				Walk(outStr, "", child);
+			if (_header["encoding"].Equals("utf-8", .OrdinalIgnoreCase)) {
+				writer = new .(stream, .UTF8, 4096);
+			} else {
+				writer = new .(stream, .ASCII, 4096);
 			}
+
+			Compose(writer);
+			delete writer;
+			return this;
+		}
+
+		// Saves the XML to a file
+		public Xml SaveToFile(String fileName)
+		{
+			FileStream stream = new .();
+
+			if (stream.Create(fileName, .Write, .None) == .Ok) {
+				SaveToStream(stream);
+				stream.Close();
+			}
+
+			delete stream;
+			return this;
+		}
+
+		public Xml SaveToString(String outStr)
+		{
+			StringStream stream = new .();
+			SaveToStream(stream);
+			outStr.Set(stream.Content);
+			delete stream;
+			return this;
 		}
 		
 		// Escapes XML control characters
