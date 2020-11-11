@@ -68,6 +68,11 @@ namespace Xml_Beef
 		[AllowAppend]
 		public this(Stream stream) : base(stream, .UTF8, false, 4096) { }
 
+		public new bool EndOfStream
+		{
+			get { return base.EndOfStream && buffStr.Length == 0; }
+		}
+
 		void FillBuffer()
 		{
 			if (buffStr.Length >= [Friend]mMaxCharsPerBuffer)
@@ -84,10 +89,14 @@ namespace Xml_Beef
 
 			toCopy = ([Friend]mMaxCharsPerBuffer) - buffStr.Length;
 
-			if (toCopy > 0)
+			if (toCopy <= 0)
 				return;
 
 			toCopy = Math.Min(TrySilent!(ReadBuffer()), toCopy);
+
+			if (toCopy <= 0)
+				return;
+
 			buffStr.Append([Friend]mCharBuffer, [Friend]mCharPos, toCopy);
 			*(&[Friend]mCharPos) += toCopy;
 		}
@@ -98,7 +107,7 @@ namespace Xml_Beef
 			if (buffStr == null)
 				return false;
 
-			if (buffStr.Length < val && EndOfStream)
+			if (buffStr.Length < val && base.EndOfStream)
 				FillBuffer();
 
 			return buffStr.Length >= val;
@@ -120,11 +129,11 @@ namespace Xml_Beef
 			bool found = false;
 
 			while (true) {
-				if (options.HasFlag(.StopString) && newLineIdx + stopCharLen > buffStr.Length && EndOfStream)
+				if (options.HasFlag(.StopString) && newLineIdx + stopCharLen > buffStr.Length && !base.EndOfStream)
 					FillBuffer();
 
 				if (newLineIdx >= buffStr.Length) {
-					if (EndOfStream) {
+					if (base.EndOfStream) {
 						postNewLineIdx = newLineIdx;
 						break;
 					} else {
