@@ -426,13 +426,7 @@ namespace Xml_Beef
 			_text.Clear();
 
 			DeleteAndClearItems!(AttributeList);
-
-			for (var value in ChildNodes) {
-				if (Document.Header != value)
-					delete value;
-			}
-
-			ChildNodes.Clear();
+			DeleteAndClearItems!(ChildNodes);
 		}
 
 		// Find a child node by its name
@@ -1224,13 +1218,11 @@ namespace Xml_Beef
 		// Deletes all nodes
 		public void Clear()
 		{
-			_documentElement = null; // Always owned by a parent, just deref
-
-			if (_header != null && _header.Parent == null) {
+			if (_header != null && _header.Parent == null)
 				delete _header;
-				_header = null;
-			}
-
+			
+			_header = null;
+			_documentElement = null; // Always owned by a parent, just unref
 			_root.Clear();
 		}
 
@@ -1369,41 +1361,5 @@ namespace Xml_Beef
 			outStr.Set(inStr);
 			UnescapeStr(outStr);
 		}
-
-#if DEBUG
-		public void Test()
-		{
-			_root.ChildNodes.Add(.DocType)
-				.SetText("html");
-
-			XmlNode html = _root.AddChild("html")
-				.SetAttribute("lang", "en-us")
-				.SetAttribute("dir", "ltr");
-
-			XmlNode head = html.AddChild("head");
-
-			head.AddChild("title")
-				.SetText("This is a title");
-			
-			XmlNode body = html.AddChild("body");
-			body.AddChild("SomeChild")
-				.SetAttribute("test", "val")
-				.SetAttribute("serious", "testval");
-
-			body.AddChild("AnotherChild")
-				.SetAttribute("test", "321")
-				.AddChild("ChildChild")
-					.SetAttribute("Works", "Holy hecc");
-
-			body.AddChild("YetAnotherChild")
-				.SetAttribute("test", "123");
-
-			body.Find("AnotherChild")
-				.Find("ChildChild")
-					.AddChild("ChildChildChild")
-						.SetAttribute("SomeFlag")
-						.SetAttribute("SomeValue", "val");
-		}
-#endif
 	}
 }
