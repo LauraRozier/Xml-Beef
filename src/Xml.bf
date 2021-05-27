@@ -217,7 +217,7 @@ namespace Xml_Beef
 		public bool IsUppercaseText(String val)
 		{
 			int valLen = val.Length;
-			String tmp = scope:: .();
+			String tmp = scope .();
 
 			if (PrepareBuffer(valLen)) {
 				tmp.Append(buffStr.Ptr, valLen);
@@ -316,8 +316,8 @@ namespace Xml_Beef
 		public XmlAttribute Find(String name)
 		{
 			for (int i = 0; i < Count; i++)
-				if (mItems[i].Name.Equals(name, StringComparison.OrdinalIgnoreCase))
-					return mItems[i];
+				if (this.[Friend]mItems[i].Name.Equals(name, StringComparison.OrdinalIgnoreCase))
+					return this.[Friend]mItems[i];
 
 			XmlAttribute tmp = null;
 			return tmp;
@@ -339,7 +339,7 @@ namespace Xml_Beef
 		public void AsString(String outStr)
 		{
 			outStr.Clear();
-			String tmp = scope:: .();
+			String tmp = scope .();
 
 			for (let item in this) {
 				item.AsString(tmp);
@@ -425,8 +425,8 @@ namespace Xml_Beef
 		{
 			_text.Clear();
 
-			DeleteAndClearItems!(AttributeList);
-			DeleteAndClearItems!(ChildNodes);
+			ClearAndDeleteItems!(AttributeList);
+			ClearAndDeleteItems!(ChildNodes);
 		}
 
 		// Find a child node by its name
@@ -814,7 +814,7 @@ namespace Xml_Beef
 		{
 			Clear();
 			XmlNode parent = _root;
-			String line = scope:: .();
+			String line = scope .();
 
 			while (!reader.EndOfStream) {
 				line.Clear();
@@ -828,7 +828,7 @@ namespace Xml_Beef
 						break;
 				}
 
-				String firstChar = scope:: .();
+				String firstChar = scope .();
 				reader.FirstChar(firstChar);
 
 				if (firstChar.Equals("!")) {
@@ -866,12 +866,12 @@ namespace Xml_Beef
 			reader.ReadText(node.Text, ">[", .None);
 
 			if (!reader.EndOfStream) {
-				String quote = scope:: .();
+				String quote = scope .();
 				reader.FirstChar(quote);
 				reader.IncCharPos();
 
 				if (quote.Equals("[")) {
-					String tmp = scope:: .();
+					String tmp = scope .();
 
 					reader.ReadText(node.Text, "]", .DeleteStopChar);
 					node.Text.AppendF("{}{}", quote, tmp);
@@ -885,7 +885,7 @@ namespace Xml_Beef
 		private void ParseProcessingInstr(XmlStreamReader reader, ref XmlNode parent)
 		{
 			reader.IncCharPos(); // omit the '?'
-			String tag = scope:: .();
+			String tag = scope .();
 			reader.ReadText(tag, "?>", .DeleteStopChar | .StopString);
 			XmlNode node = ParseTag(tag, ref parent);
 
@@ -897,7 +897,7 @@ namespace Xml_Beef
 
 				if (!Options.HasFlag(.ParseProcessingInstruction)) {
 					node.Text = tag;
-					DeleteAndClearItems!(node.AttributeList);
+					ClearAndDeleteItems!(node.AttributeList);
 				}
 			}
 
@@ -930,12 +930,12 @@ namespace Xml_Beef
 
 		private XmlNode ParseTag(XmlStreamReader reader, bool parseText, ref XmlNode parent)
 		{
-			String tag = scope:: .();
+			String tag = scope .();
 			reader.ReadText(tag, ">", .DeleteStopChar);
 			XmlNode node = ParseTag(tag, ref parent);
 
 			if (node == parent && parseText) { // only non-self closing nodes may have a text
-				String line = scope:: .();
+				String line = scope .();
 				reader.ReadText(line, "<", .None);
 				UnescapeStr(line);
 				
@@ -976,7 +976,7 @@ namespace Xml_Beef
 			
 			// Create a new new .Element node
 			node = parent.ChildNodes.Add();
-			String tag = scope:: .(tagStr);
+			String tag = scope .(tagStr);
 
 			if (tag.Length > 0 && tag.EndsWith('/')) {
 				tag.RemoveFromEnd(1);
@@ -987,7 +987,7 @@ namespace Xml_Beef
 			int charPos = tag.IndexOf(' ');
 
 			if (charPos > -1) { // Tag may have attributes
-				String line = scope:: .();
+				String line = scope .();
 				line.Append(tag, charPos);
 				tag.RemoveToEnd(charPos);
 
@@ -1002,11 +1002,11 @@ namespace Xml_Beef
 		// Parse attributes into the attribute list for a given string
 		public void ParseAttributes(String attribStr, XmlAttributeList attributeList)
 		{
-			String value = scope:: .(attribStr);
+			String value = scope .(attribStr);
 			value.TrimStart();
 
 			while (value.Length > 0) {
-				String attrName = scope:: .();
+				String attrName = scope .();
 				ExtractText(attrName, value, "= ", .None);
 				value.TrimStart();
 				XmlAttribute attr = attributeList.Add(attrName);
@@ -1016,12 +1016,12 @@ namespace Xml_Beef
 
 				value.Remove(0);
 				attr.AttrType = .Value;
-				String dummy = scope:: .();
+				String dummy = scope .();
 				ExtractText(dummy, value, "'\"", .None);
 				value.TrimStart();
 
 				if (value.Length > 0) {
-					String quote = scope:: .(value, 0, 1);
+					String quote = scope .(value, 0, 1);
 					value.Remove(0);
 					ExtractText(attr.Value, value, quote, .DeleteStopChar); // Get Attribute Value
 					UnescapeStr(attr.Value);
@@ -1076,7 +1076,7 @@ namespace Xml_Beef
 				case .ProcessingInstruction:
 				{
 					if (node.AttributeList.Count > 0) {
-						String tmp = scope:: .();
+						String tmp = scope .();
 						node.AttributeList.AsString(tmp);
 						writer.Write("?{}{}?>", node.Name, tmp);
 					} else {
@@ -1087,7 +1087,7 @@ namespace Xml_Beef
 				}
 				case .XmlDecl:
 				{
-					String tmp = scope:: .();
+					String tmp = scope .();
 					node.AttributeList.AsString(tmp);
 					writer.Write("?{}{}?>", node.Name, tmp);
 					return;
@@ -1095,7 +1095,7 @@ namespace Xml_Beef
 				default: {}
 			}
 
-			String tmp = scope:: .();
+			String tmp = scope .();
 			node.AttributeList.AsString(tmp);
 			writer.Write("{}{}", node.Name, tmp);
 
@@ -1117,7 +1117,7 @@ namespace Xml_Beef
 			}
 
 			// Set indent for child nodes
-			String indent = scope:: .();
+			String indent = scope .();
 
 			if (!Options.HasFlag(.Compact))
 				indent.AppendF("{}  ", prefix);
